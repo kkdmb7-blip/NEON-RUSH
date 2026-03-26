@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>NEON RUSH</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+}
+#wrap {
+  position: relative;
+  width: min(100vw, 100vh);
+  height: min(100vw, 100vh);
+  max-width: 600px;
+  max-height: 600px;
+}
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+#ui {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+  pointer-events: none;
+  z-index: 2;
+}
+.ui-text {
+  color: #0ff;
+  font-size: clamp(11px, 2.5vw, 15px);
+  font-weight: bold;
+  text-shadow: 0 0 8px #0ff, 0 0 16px #0ff;
+  letter-spacing: 2px;
+}
+#progress-wrap {
+  position: absolute;
+  bottom: 10px;
+  left: 10px; right: 10px;
+  height: 6px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+#progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0ff, #f0f);
+  border-radius: 3px;
+  transition: width 0.3s;
+  box-shadow: 0 0 8px #0ff;
+}
+#combo-display {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 3;
+  text-align: center;
+}
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 10;
+  background: rgba(0,0,0,0.85);
+}
+.overlay-title {
+  font-size: clamp(28px, 8vw, 52px);
+  font-weight: bold;
+  letter-spacing: 4px;
+  text-align: center;
+}
+.overlay-sub {
+  font-size: clamp(13px, 3vw, 18px);
+  color: #aaa;
+  text-align: center;
+  letter-spacing: 2px;
+}
+.neon-btn {
+  background: transparent;
+  border: 2px solid #0ff;
+  color: #0ff;
+  font-family: 'Courier New', monospace;
+  font-size: clamp(14px, 3vw, 18px);
+  font-weight: bold;
+  letter-spacing: 3px;
+  padding: 12px 36px;
+  cursor: pointer;
+  border-radius: 4px;
+  text-shadow: 0 0 8px #0ff;
+  box-shadow: 0 0 16px #0ff, inset 0 0 16px rgba(0,255,255,0.1);
+  transition: all 0.2s;
+  margin-top: 8px;
+}
+.neon-btn:hover {
+  background: rgba(0,255,255,0.15);
+  box-shadow: 0 0 30px #0ff, inset 0 0 30px rgba(0,255,255,0.2);
+}
+#screen-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <div class="ui-text" id="stage-ui">STAGE: 01/100</div>
+    <div class="ui-text" id="score-ui">SCORE: 00000</div>
+  </div>
+  <div id="combo-display"></div>
+  <div id="progress-wrap"><div id="progress-bar" style="width:1%"></div></div>
+  <div id="screen-flash"></div>
+  <div id="overlay">
+    <div class="overlay-title" style="color:#0ff;text-shadow:0 0 20px #0ff,0 0 40px #0ff">NEON RUSH</div>
+    <div class="overlay-sub">링의 틈을 통해 오브를 맞춰라!<br>100 스테이지 도전</div>
+    <div class="overlay-sub" style="color:#f0f;font-size:clamp(11px,2.5vw,14px)">클릭 / 탭으로 발사</div>
+    <button class="neon-btn" id="start-btn">LAUNCH</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+const overlay = document.getElementById('overlay');
+const comboDisplay = document.getElementById('combo-display');
+const screenFlash = document.getElementById('screen-flash');
+
+let W = 600, H = 600;
+canvas.width = W; canvas.height = H;
+
+// 게임 상태
+let stage = 1, score = 0, combo = 0, gameState = 'menu';
+let shakeX = 0, shakeY = 0, shakeTimer = 0;
+let clearTimer = 0;
+let hitsRequired = 0, hitsLanded = 0;
+
+// 링 & 발사체
+let rings = [];
+let projectile = null;
+let particles = [];
+let comboTexts = [];
+let orbPulse = 0;
+let orbFlash = 0;
+
+const CX = W / 2, CY = H / 2;
+const ORB_R = 22;
+const PROJ_SPEED = 7;
+
+// 난이도 계산
+function getDifficulty(s) {
+  const t = (s - 1) / 99;
+  return {
+    ringCount: Math.min(1 + Math.floor(s / 20), 4),
+    baseSpeed: 0.012 + t * 0.055,
+    gapSize: Math.max(0.45 - t * 0.28, 0.17),
+    hitsNeeded: 1 + Math.floor(s / 15),
+    dirChange: s > 40,
+    colorShift: s > 60
+  };
+}
+
+function initStage() {
+  const d = getDifficulty(stage);
+  rings = [];
+  particles = [];
+  comboTexts = [];
+  projectile = null;
+  hitsRequired = d.hitsNeeded;
+  hitsLanded = 0;
+  orbFlash = 0;
+
+  const radii = [100, 148, 196, 244];
+  const colors = ['#0ff', '#f0f', '#ff0', '#0f8'];
+
+  for (let i = 0; i < d.ringCount; i++) {
+    const dir = (i % 2 === 0) ? 1 : -1;
+    const speed = d.baseSpeed * (1 + i * 0.15) * dir;
+    const gapCount = i === 0 ? 1 : (stage > 50 ? 2 : 1);
+    const gaps = [];
+    for (let g = 0; g < gapCount; g++) {
+      gaps.push({
+        angle: (Math.PI * 2 / gapCount) * g + Math.random() * Math.PI,
+        size: d.gapSize
+      });
+    }
+    rings.push({
+      r: radii[i],
+      angle: Math.random() * Math.PI * 2,
+      speed,
+      baseSpeed: speed,
+      gaps,
+      color: colors[i],
+      width: 8 - i,
+      dirChangeTimer: d.dirChange ? (80 + Math.random() * 120) : 99999
+    });
+  }
+  spawnProjectile();
+  updateUI();
+}
+
+function spawnProjectile() {
+  const angle = Math.random() * Math.PI * 2;
+  const dist = Math.min(W, H) * 0.46;
+  projectile = {
+    x: CX + Math.cos(angle) * dist,
+    y: CY + Math.sin(angle) * dist,
+    vx: 0, vy: 0,
+    r: 7,
+    angle,
+    active: false,
+    color: '#fff',
+    trail: []
+  };
+}
+
+function fireProjectile() {
+  if (!projectile || projectile.active || gameState !== 'playing') return;
+  const dx = CX - projectile.x;
+  const dy = CY - projectile.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  projectile.vx = (dx / dist) * PROJ_SPEED;
+  projectile.vy = (dy / dist) * PROJ_SPEED;
+  projectile.active = true;
+}
+
+function checkRingCollision(px, py) {
+  for (let ring of rings) {
+    const dx = px - CX, dy = py - CY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const hw = ring.width / 2 + projectile.r;
+    if (Math.abs(dist - ring.r) < hw) {
+      // 각도 체크
+      let angle = Math.atan2(dy, dx) - ring.angle;
+      angle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      let inGap = false;
+      for (let gap of ring.gaps) {
+        let ga = ((gap.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        let diff = Math.abs(angle - ga);
+        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+        if (diff < gap.size / 2) { inGap = true; break; }
+      }
+      if (!inGap) return true; // 충돌!
+    }
+  }
+  return false;
+}
+
+function update() {
+  if (gameState !== 'playing') return;
+
+  // 화면 흔들기
+  if (shakeTimer > 0) {
+    shakeX = (Math.random() - 0.5) * shakeTimer * 0.8;
+    shakeY = (Math.random() - 0.5) * shakeTimer * 0.8;
+    shakeTimer -= 2;
+  } else { shakeX = 0; shakeY = 0; }
+
+  // 링 업데이트
+  for (let ring of rings) {
+    ring.angle += ring.speed;
+    ring.dirChangeTimer--;
+    if (ring.dirChangeTimer <= 0) {
+      ring.speed = -ring.baseSpeed * (0.8 + Math.random() * 0.4);
+      ring.baseSpeed = ring.speed;
+      ring.dirChangeTimer = 80 + Math.random() * 120;
+    }
+  }
+
+  // orb 펄스
+  orbPulse += 0.06;
+  if (orbFlash > 0) orbFlash -= 0.08;
+
+  // 발사체
+  if (projectile && projectile.active) {
+    projectile.trail.push({ x: projectile.x, y: projectile.y, age: 0 });
+    if (projectile.trail.length > 14) projectile.trail.shift();
+    projectile.trail.forEach(t => t.age++);
+
+    projectile.x += projectile.vx;
+    projectile.y += projectile.vy;
+
+    // 링 충돌
+    if (checkRingCollision(projectile.x, projectile.y)) {
+      triggerFail();
+      return;
+    }
+
+    // 오브 충돌
+    const dx = projectile.x - CX, dy = projectile.y - CY;
+    if (Math.sqrt(dx*dx + dy*dy) < ORB_R + projectile.r) {
+      triggerHit();
+      return;
+    }
+
+    // 화면 밖
+    const d = getDifficulty(stage);
+    const maxR = radii_max() + 30;
+    const dd = Math.sqrt(dx*dx + dy*dy);
+    if (dd > maxR) {
+      triggerFail();
+      return;
+    }
+  }
+
+  // 파티클
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.05;
+    p.vx *= 0.97;
+    p.life--;
+    p.r *= 0.96;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // 콤보 텍스트
+  for (let i = comboTexts.length - 1; i >= 0; i--) {
+    const t = comboTexts[i];
+    t.y -= 1.5;
+    t.life--;
+    if (t.life <= 0) comboTexts.splice(i, 1);
+  }
+
+  // 스테이지 클리어 체크
+  if (clearTimer > 0) {
+    clearTimer--;
+    if (clearTimer <= 0) nextStage();
+  }
+}
+
+function radii_max() {
+  if (rings.length === 0) return 200;
+  return Math.max(...rings.map(r => r.r));
+}
+
+function triggerHit() {
+  hitsLanded++;
+  combo++;
+  orbFlash = 1;
+  score += 100 * combo * stage;
+
+  spawnParticles(CX, CY, projectile.color, 16, true);
+
+  const msgs = ['NICE!', 'GOOD!', 'GREAT!', 'PERFECT!', 'AMAZING!', 'GODLIKE!'];
+  const msgIdx = Math.min(Math.floor(combo / 3), msgs.length - 1);
+  const comboMsg = combo >= 3 ? `COMBO x${combo}!\n${msgs[msgIdx]}` : msgs[Math.min(combo-1, msgs.length-1)];
+
+  comboTexts.push({
+    text: comboMsg,
+    x: CX + (Math.random()-0.5)*80,
+    y: CY - 60,
+    life: 55,
+    color: combo >= 5 ? '#ff0' : combo >= 3 ? '#f0f' : '#0ff',
+    size: combo >= 5 ? 20 : 16
+  });
+
+  updateUI();
+
+  if (hitsLanded >= hitsRequired) {
+    stageClear();
+  } else {
+    spawnProjectile();
+  }
+}
+
+function triggerFail() {
+  combo = 0;
+  shakeTimer = 18;
+  screenFlash.style.background = 'rgba(255,0,0,0.5)';
+  screenFlash.style.opacity = '1';
+  setTimeout(() => { screenFlash.style.transition = 'opacity 0.4s'; screenFlash.style.opacity = '0'; }, 50);
+  setTimeout(() => { screenFlash.style.transition = ''; }, 500);
+
+  spawnParticles(projectile.x, projectile.y, '#f00', 12, false);
+
+  gameState = 'fail';
+  setTimeout(showGameOver, 600);
+}
+
+function stageClear() {
+  gameState = 'clear';
+  score += 500 * stage;
+
+  // 클리어 이펙트
+  for (let i = 0; i < 40; i++) {
+    const angle = (Math.PI * 2 / 40) * i;
+    particles.push({
+      x: CX, y: CY,
+      vx: Math.cos(angle) * (3 + Math.random() * 4),
+      vy: Math.sin(angle) * (3 + Math.random() * 4),
+      color: ['#0ff','#f0f','#ff0','#0f8','#fff'][Math.floor(Math.random()*5)],
+      life: 60 + Math.random() * 40,
+      r: 4 + Math.random() * 4
+    });
+  }
+
+  screenFlash.style.background = 'rgba(0,255,255,0.3)';
+  screenFlash.style.opacity = '1';
+  setTimeout(() => { screenFlash.style.transition = 'opacity 0.8s'; screenFlash.style.opacity = '0'; }, 50);
+  setTimeout(() => { screenFlash.style.transition = ''; }, 900);
+
+  showClearText();
+  clearTimer = 90;
+}
+
+function showClearText() {
+  comboTexts = [];
+  comboTexts.push({
+    text: stage >= 100 ? '🏆 ALL CLEAR!' : `STAGE ${stage}\nCLEARED!`,
+    x: CX, y: CY - 20,
+    life: 85,
+    color: '#ff0',
+    size: 28
+  });
+}
+
+function nextStage() {
+  if (stage >= 100) {
+    showComplete();
+    return;
+  }
+  stage++;
+  gameState = 'playing';
+  initStage();
+}
+
+function spawnParticles(x, y, color, count, burst) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = burst ? (2 + Math.random() * 5) : (1 + Math.random() * 3);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - (burst ? 1 : 0),
+      color,
+      life: 30 + Math.random() * 30,
+      r: 3 + Math.random() * 3
+    });
+  }
+}
+
+function showGameOver() {
+  overlay.innerHTML = `
+    <div class="overlay-title" style="color:#f44;text-shadow:0 0 20px #f44">GAME OVER</div>
+    <div class="overlay-sub">STAGE: ${String(stage).padStart(2,'0')} / 100</div>
+    <div class="overlay-sub" style="color:#ff0;font-size:clamp(18px,4vw,24px)">SCORE: ${score.toLocaleString()}</div>
+    <button class="neon-btn" style="border-color:#f44;color:#f44;text-shadow:0 0 8px #f44;box-shadow:0 0 16px #f44" id="retry-btn">RETRY</button>
+    <button class="neon-btn" style="margin-top:0;border-color:#666;color:#666;box-shadow:none" id="menu-btn2">MENU</button>
+  `;
+  overlay.style.display = 'flex';
+  document.getElementById('retry-btn').onclick = () => {
+    overlay.style.display = 'none';
+    gameState = 'playing';
+    initStage();
+  };
+  document.getElementById('menu-btn2').onclick = () => {
+    stage = 1; score = 0; combo = 0;
+    showMenu();
+  };
+}
+
+function showComplete() {
+  overlay.innerHTML = `
+    <div class="overlay-title" style="color:#ff0;text-shadow:0 0 20px #ff0,0 0 40px #ff0">🏆 COMPLETE!</div>
+    <div class="overlay-sub" style="color:#0ff">ALL 100 STAGES CLEARED!</div>
+    <div class="overlay-sub" style="color:#ff0;font-size:clamp(18px,4vw,24px)">FINAL SCORE: ${score.toLocaleString()}</div>
+    <button class="neon-btn" id="again-btn">PLAY AGAIN</button>
+  `;
+  overlay.style.display = 'flex';
+  document.getElementById('again-btn').onclick = () => {
+    stage = 1; score = 0; combo = 0;
+    overlay.style.display = 'none';
+    gameState = 'playing';
+    initStage();
+  };
+}
+
+function showMenu() {
+  overlay.innerHTML = `
+    <div class="overlay-title" style="color:#0ff;text-shadow:0 0 20px #0ff,0 0 40px #0ff">NEON RUSH</div>
+    <div class="overlay-sub">링의 틈을 통해 오브를 맞춰라!<br>100 스테이지 도전</div>
+    <div class="overlay-sub" style="color:#f0f;font-size:clamp(11px,2.5vw,14px)">클릭 / 탭으로 발사</div>
+    <button class="neon-btn" id="start-btn2">LAUNCH</button>
+  `;
+  overlay.style.display = 'flex';
+  document.getElementById('start-btn2').onclick = startGame;
+}
+
+function updateUI() {
+  document.getElementById('stage-ui').textContent = `STAGE: ${String(stage).padStart(2,'0')}/100`;
+  document.getElementById('score-ui').textContent = `SCORE: ${String(score).padStart(5,'0')}`;
+  document.getElementById('progress-bar').style.width = ((stage - 1) / 99 * 100) + '%';
+}
+
+// 드로잉
+function drawGlow(x, y, r, color, intensity) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r * intensity);
+  g.addColorStop(0, color);
+  g.addColorStop(1, 'transparent');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r * intensity, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function draw() {
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // 배경
+  ctx.fillStyle = '#030308';
+  ctx.fillRect(-10, -10, W+20, H+20);
+
+  // 배경 그리드
+  ctx.strokeStyle = 'rgba(0,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // 링들
+  for (let ring of rings) {
+    ctx.save();
+    ctx.translate(CX, CY);
+
+    // 링 글로우
+    ctx.shadowColor = ring.color;
+    ctx.shadowBlur = 15;
+
+    for (let gap of ring.gaps) {
+      const ga = ring.angle + gap.angle;
+      const startAngle = ga + gap.size / 2;
+      const endAngle = ga + Math.PI * 2 - gap.size / 2;
+
+      ctx.strokeStyle = ring.color;
+      ctx.lineWidth = ring.width;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, 0, ring.r, startAngle, endAngle);
+      ctx.stroke();
+    }
+
+    // 갭 표시 (희미하게)
+    ctx.shadowBlur = 0;
+    for (let gap of ring.gaps) {
+      const ga = ring.angle + gap.angle;
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = ring.width;
+      ctx.beginPath();
+      ctx.arc(0, 0, ring.r, ga - gap.size/2, ga + gap.size/2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  // 중앙 오브
+  const pulse = Math.sin(orbPulse) * 4;
+  const orbR = ORB_R + pulse + orbFlash * 8;
+
+  ctx.save();
+  ctx.shadowColor = orbFlash > 0.3 ? '#fff' : '#0ff';
+  ctx.shadowBlur = 20 + orbFlash * 30;
+
+  // 오브 글로우
+  const og = ctx.createRadialGradient(CX, CY, 0, CX, CY, orbR * 2);
+  og.addColorStop(0, orbFlash > 0.3 ? 'rgba(255,255,255,0.8)' : 'rgba(0,255,255,0.6)');
+  og.addColorStop(0.5, orbFlash > 0.3 ? 'rgba(255,200,0,0.3)' : 'rgba(0,150,255,0.2)');
+  og.addColorStop(1, 'transparent');
+  ctx.fillStyle = og;
+  ctx.beginPath();
+  ctx.arc(CX, CY, orbR * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 오브 본체
+  const orbGrad = ctx.createRadialGradient(CX-5, CY-5, 0, CX, CY, orbR);
+  orbGrad.addColorStop(0, orbFlash > 0.3 ? '#fff' : '#7ff');
+  orbGrad.addColorStop(0.6, orbFlash > 0.3 ? '#ff0' : '#0cf');
+  orbGrad.addColorStop(1, orbFlash > 0.3 ? '#f80' : '#006');
+  ctx.fillStyle = orbGrad;
+  ctx.beginPath();
+  ctx.arc(CX, CY, orbR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 히트 카운터
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath();
+  ctx.arc(CX, CY, orbR * 0.65, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${orbR * 0.7}px 'Courier New'`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${hitsLanded}/${hitsRequired}`, CX, CY);
+  ctx.restore();
+
+  // 발사체
+  if (projectile) {
+    // 트레일
+    for (let i = 0; i < projectile.trail.length; i++) {
+      const t = projectile.trail[i];
+      const alpha = (i / projectile.trail.length) * 0.5;
+      const r = projectile.r * (i / projectile.trail.length) * 0.7;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#0ff';
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 발사체 본체
+    ctx.save();
+    ctx.shadowColor = '#0ff';
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(projectile.x, projectile.y, projectile.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0ff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 대기 중이면 펄스
+    if (!projectile.active) {
+      ctx.strokeStyle = 'rgba(0,255,255,0.4)';
+      ctx.lineWidth = 1;
+      const pp = (Math.sin(orbPulse * 2) + 1) * 6;
+      ctx.beginPath();
+      ctx.arc(projectile.x, projectile.y, projectile.r + pp, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 조준선
+      const dx = CX - projectile.x, dy = CY - projectile.y;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      ctx.setLineDash([6, 8]);
+      ctx.strokeStyle = 'rgba(0,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(projectile.x, projectile.y);
+      ctx.lineTo(projectile.x + (dx/dist)*50, projectile.y + (dy/dist)*50);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
+  // 파티클
+  for (let p of particles) {
+    ctx.globalAlpha = p.life / 60;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+
+  // 콤보 텍스트
+  for (let t of comboTexts) {
+    ctx.globalAlpha = Math.min(1, t.life / 20);
+    ctx.fillStyle = t.color;
+    ctx.shadowColor = t.color;
+    ctx.shadowBlur = 12;
+    ctx.font = `bold ${t.size}px 'Courier New'`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lines = t.text.split('\n');
+    lines.forEach((line, i) => {
+      ctx.fillText(line, t.x, t.y + i * (t.size + 4));
+    });
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+}
+
+// 입력
+canvas.addEventListener('click', () => {
+  if (gameState === 'playing') fireProjectile();
+});
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (gameState === 'playing') fireProjectile();
+}, { passive: false });
+
+document.getElementById('start-btn').onclick = startGame;
+
+function startGame() {
+  overlay.style.display = 'none';
+  stage = 1; score = 0; combo = 0;
+  gameState = 'playing';
+  initStage();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
