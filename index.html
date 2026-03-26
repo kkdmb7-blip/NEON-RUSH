@@ -174,12 +174,12 @@ const PROJ_SPEED = 7;
 function getDifficulty(s) {
   const t = (s - 1) / 99;
   return {
-    ringCount: Math.min(1 + Math.floor(s / 20), 4),
-    baseSpeed: 0.012 + t * 0.055,
-    gapSize: Math.max(0.45 - t * 0.28, 0.17),
-    hitsNeeded: 1 + Math.floor(s / 15),
-    dirChange: s > 40,
-    colorShift: s > 60
+    ringCount: Math.min(1 + Math.floor(s / 30), 4),
+    baseSpeed: 0.008 + t * 0.032,
+    gapSize: Math.max(0.65 - t * 0.25, 0.28),
+    hitsNeeded: 1 + Math.floor(s / 20),
+    dirChange: s > 60,
+    colorShift: s > 70
   };
 }
 
