@@ -344,12 +344,6 @@ function update() {
     t.life--;
     if (t.life <= 0) comboTexts.splice(i, 1);
   }
-
-  // 스테이지 클리어 체크
-  if (clearTimer > 0) {
-    clearTimer--;
-    if (clearTimer <= 0) nextStage();
-  }
 }
 
 function radii_max() {
@@ -404,6 +398,7 @@ function triggerFail() {
 function stageClear() {
   gameState = 'clear';
   score += 500 * stage;
+  projectile = null;
 
   // 클리어 이펙트
   for (let i = 0; i < 40; i++) {
@@ -424,7 +419,12 @@ function stageClear() {
   setTimeout(() => { screenFlash.style.transition = ''; }, 900);
 
   showClearText();
-  clearTimer = 90;
+
+  // 1.5초 후 자동으로 다음 스테이지
+  setTimeout(() => {
+    comboTexts = [];
+    nextStage();
+  }, 1500);
 }
 
 function showClearText() {
