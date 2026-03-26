@@ -251,9 +251,8 @@ function checkRingCollision(px, py) {
   for (let ring of rings) {
     const dx = px - CX, dy = py - CY;
     const dist = Math.sqrt(dx*dx + dy*dy);
-    const hw = ring.width / 2 + projectile.r;
+    const hw = ring.width / 2 + 2;
     if (Math.abs(dist - ring.r) < hw) {
-      // 각도 체크
       let angle = Math.atan2(dy, dx) - ring.angle;
       angle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
       let inGap = false;
@@ -261,9 +260,9 @@ function checkRingCollision(px, py) {
         let ga = ((gap.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
         let diff = Math.abs(angle - ga);
         if (diff > Math.PI) diff = Math.PI * 2 - diff;
-        if (diff < gap.size / 2) { inGap = true; break; }
+        if (diff < gap.size / 2 + 0.15) { inGap = true; break; }
       }
-      if (!inGap) return true; // 충돌!
+      if (!inGap) return true;
     }
   }
   return false;
